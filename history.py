@@ -3,6 +3,7 @@ import hashlib
 import json
 import math
 import sqlite3
+import os
 from pathlib import Path
 from contextlib import closing
 from privacy import Mask
@@ -41,8 +42,80 @@ class History:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self.path)
         conn.execute('CREATE TABLE IF NOT EXISTS logs (id INTEGER PRIMARY KEY, fingerprint TEXT, masked_sql TEXT, plan TEXT, duration REAL, created TEXT DEFAULT CURRENT_TIMESTAMP)')
+        conn.execute('CREATE TABLE IF NOT EXISTS executions (log_id INTEGER PRIMARY KEY, scope TEXT, topic TEXT, query_hash TEXT, encrypted_sql BLOB)')
         conn.commit()
         return conn
+
+    def cipher(self):
+        from cryptography.fernet import Fernet
+        key_path = self.path.with_suffix('.key')
+        try:
+            with key_path.open('xb') as handle:
+                handle.write(Fernet.generate_key())
+        except FileExistsError:
+            pass
+        return Fernet(key_path.read_bytes())
+
+    def scope(self):
+        # Never put connection credentials in the history record.
+        return hashlib.sha256(os.getenv('DATABASE_URL', 'local-demo-55432-querylab').encode()).hexdigest()
+
+    def add_execution(self, query, plan, duration):
+        """Only actually benchmarked queries can be replayed by diagnosis."""
+        from sqlglot import exp
+        tree = Mask(query).tree
+        tables = {t.name.lower() for t in tree.find_all(exp.Table)}
+        topic = 'sales' if {'customer', 'product', 'orders'} <= tables else 'products' if {'product', 'orders'} <= tables else 'payments' if 'transaction' in tables else 'other'
+        canonical = tree.sql(dialect='postgres')
+        encrypted = self.cipher().encrypt(canonical.encode())
+        log_id = self.add(query, plan, duration)
+        with closing(self.db()) as conn, conn:
+            conn.execute('INSERT INTO executions VALUES (?,?,?,?,?)', (log_id, self.scope(), topic,
+                         hashlib.sha256(canonical.encode()).hexdigest(), encrypted))
+        return log_id
+
+    def workload(self, question, associated=''):
+        """Resolve locally to actual prior executions, never generate a new report."""
+        from workloads import query_from_input
+        from statistics import median
+        query_hash = None
+        if associated:
+            canonical = Mask(associated).tree.sql(dialect='postgres')
+            query_hash = hashlib.sha256(canonical.encode()).hexdigest()
+            topic = None
+        else:
+            try:
+                _, topic = query_from_input(question)
+                if topic is None:
+                    raise ValueError()
+                topic = topic.removeprefix('weekly_')
+            except ValueError:
+                topic = None
+                if not any(w in question.lower() for w in ('slow', 'performance', 'optimiz', 'query', 'queries', 'timeout', 'timing out')):
+                    raise ValueError('Ask about query performance, sales, products or payments.')
+        with closing(self.db()) as conn:
+            rows = conn.execute('SELECT e.log_id,e.topic,e.query_hash,e.encrypted_sql,l.plan,l.duration,l.created FROM executions e JOIN logs l ON l.id=e.log_id WHERE e.scope=? ORDER BY e.log_id DESC LIMIT 100', (self.scope(),)).fetchall()
+        rows = [r for r in rows if (r[2] == query_hash if query_hash else topic is None or r[1] == topic)]
+        if not rows:
+            raise ValueError('No relevant past executions found for this database. Run the report with Optimize & compare first, then diagnose it. Imported unverified plans are not replayed.')
+        # Prefer a historical weekly workload for a weekly question; do not alter dates.
+        if 'week' in question.lower() and not associated:
+            weekly = []
+            import re
+            from datetime import date
+            for r in rows:
+                dates = re.findall(r"'(\d{4}-\d{2}-\d{2})'", self.cipher().decrypt(r[3]).decode())
+                if len(dates) >= 2 and abs((date.fromisoformat(dates[1])-date.fromisoformat(dates[0])).days) == 7:
+                    weekly.append(r)
+            if weekly:
+                rows = weekly
+        selected = max(rows, key=lambda r: r[5])
+        same = [r for r in rows if r[2] == selected[2]]
+        query = self.cipher().decrypt(selected[3]).decode()
+        return query, dict(selected_record_id=selected[0], matched_executions=len(rows),
+            structurally_similar_logs=len(same), median_logged_duration_ms=median(r[5] for r in same),
+            scope='Actual benchmark history for this database; grouped by exact local SQL hash. Slowest matching execution selected. Report-topic matching is limited to the demo tables.',
+            recent_plan_summaries=[dict(record_id=r[0], created_at=r[6], duration_ms=r[5], plan=json.loads(r[4])) for r in same[:5]])
 
     def add(self, query, plan, duration=0):
         mask = Mask(query)

@@ -86,6 +86,7 @@ def optimize_query(data):
                 if action != 'keep':
                     raise ValueError('Rewrite introduced ordering or limits; rejected to preserve result semantics.')
             metrics = compare(conn, original, candidate)
+            execution_plan = explain(conn, original, True)['Plan']
         except Exception:
             # Invalid/failed proposals receive a negative reward, never a speedup reward.
             if action != 'keep':
@@ -96,7 +97,7 @@ def optimize_query(data):
     if action != 'ai' and graph:
         top=gnn.explain(graph)[0]
         reason += ' Plan evidence: ' + top['reason']
-    history.add(original, plan, metrics['original']['execution_ms'])
+    history.add_execution(original, execution_plan, metrics['original']['execution_ms'])
     return dict(masked_query=mask.sql, masked_optimized=masked_candidate,
                    optimized_query=candidate, explanation=reason, engine=engine,
                    graph=graph, metrics=metrics, changed=candidate != original,
@@ -184,6 +185,17 @@ def diagnose_question():
         return jsonify(error=str(exc)), 400
     except Exception:
         return jsonify(error='Could not diagnose this workload. Check PostgreSQL and the report SQL. No source tables were changed.'), 400
+
+
+@app.post('/api/diagnose-file')
+def diagnose_file():
+    try:
+        from workload_upload import analyze_workload
+        return jsonify(analyze_workload(request.get_json(), gnn, optimize_query))
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    except Exception:
+        return jsonify(error='Could not analyze the uploaded workload. Check the file and local PostgreSQL.'), 400
 
 
 @app.post('/api/approve')

@@ -1,0 +1,11 @@
+[
+  {
+    "query": "WITH recent_orders AS MATERIALIZED (SELECT * FROM orders)\nSELECT c.city, p.category, COUNT(*) AS order_count,\n       SUM(o.amount) AS revenue\nFROM recent_orders o\nJOIN customer c ON c.id = o.customer_id\nJOIN product p ON p.id = o.product_id\nJOIN \"transaction\" t ON t.order_id = o.id\nWHERE o.status = 'completed' AND t.status = 'paid'\n  AND o.order_date >= CAST('2025-06-01' AS DATE)\n  AND o.order_date < CAST('2025-07-01' AS DATE)\nGROUP BY c.city, p.category;"
+  },
+  {
+    "query": "WITH all_orders AS MATERIALIZED (SELECT * FROM orders)\nSELECT p.category, COUNT(*) AS order_count,\n       SUM(o.quantity) AS units_sold, SUM(o.amount) AS revenue\nFROM all_orders o\nJOIN product p ON p.id = o.product_id\nWHERE o.status = 'completed'\n  AND o.order_date >= CAST('2025-11-01' AS DATE)\n  AND o.order_date < CAST('2025-12-01' AS DATE)\nGROUP BY p.category;"
+  },
+  {
+    "query": "WITH all_orders AS MATERIALIZED (SELECT * FROM orders)\nSELECT t.payment_method, COUNT(*) AS payments,\n       SUM(t.amount) AS total_paid\nFROM all_orders o\nJOIN \"transaction\" t ON t.order_id = o.id\nWHERE o.status = 'completed' AND t.status = 'paid'\n  AND o.order_date >= CAST('2025-03-01' AS DATE)\n  AND o.order_date < CAST('2025-04-01' AS DATE)\nGROUP BY t.payment_method;"
+  }
+]

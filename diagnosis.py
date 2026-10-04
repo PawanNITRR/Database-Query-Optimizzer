@@ -21,27 +21,18 @@ def diagnose(data, gnn, agent, history, optimize_query):
     if not question or len(question) > 2000:
         raise ValueError('Enter a performance question (maximum 2,000 characters).')
     associated = data.get('query', '').strip()
-    query, intent = query_from_input(associated or question)
+    query, recent = history.workload(question, associated)
+    intent = 'historical_execution'
     mask = Mask(query)
-    recent = history.evidence(query)
     with connect() as conn:
         configure(conn)
         graph = gnn.analyze(explain(conn, mask.tree.sql(dialect='postgres'))['Plan'])
         recommendations = recommend(conn, query)
-    answer = [('Analyzed your associated SQL.' if associated else
-               'Matched the question to the %s demo report. This is a fixed workload, not automatic dashboard discovery.' % intent),
+    historical_graphs = [gnn.analyze(r['plan']) for r in recent['recent_plan_summaries']]
+    answer = ['Selected past execution #%d from %d relevant recorded executions for this database. The original SQL and dates are retained.' % (recent['selected_record_id'], recent['matched_executions']),
               plan_facts(graph),
-              'Recent masked history: %d structurally similar records. %s' %
-              (recent['structurally_similar_logs'], recent['scope'])]
-    if recent['median_logged_duration_ms'] is not None:
-        answer.append('Their median recorded runtime was %.3f ms.' % recent['median_logged_duration_ms'])
-    summaries = recent['recent_plan_summaries']
-    if summaries:
-        answer.append('The %d most recent matching masked plans contain %d sequential scan operators, %d nested loops and %d CTE scans in total. Structural similarity does not establish that these are the same dashboard.' %
-                      (len(summaries), sum(r['operators'].count('Seq Scan') for r in summaries),
-                       sum(r['operators'].count('Nested Loop') for r in summaries), sum(r['operators'].count('CTE Scan') for r in summaries)))
-    else:
-        answer.append('No recent matching plans were available; this diagnosis uses the current EXPLAIN plan.')
+              'Recent masked history: %d executions of this exact query. Historical median %.3f ms. %s' % (recent['structurally_similar_logs'], recent['median_logged_duration_ms'], recent['scope'])]
+    answer.append('The %d recent historical plans contain %d sequential scans, %d nested loops and %d CTE scans in total.' % (len(historical_graphs), sum(n['operator']=='Seq Scan' for g in historical_graphs for n in g), sum(n['operator']=='Nested Loop' for g in historical_graphs for n in g), sum(n['operator']=='CTE Scan' for g in historical_graphs for n in g)))
     result = optimize_query({'query': query, 'use_ai': bool(data.get('use_ai', False))})
     m = result['metrics']
     answer.append('Local test database: original %.3f ms; selected query %.3f ms (%+.2f%% improvement). Result equivalence was checked inside PostgreSQL.' %
@@ -59,7 +50,23 @@ def diagnose(data, gnn, agent, history, optimize_query):
     except Exception:
         simulation_error = 'Sandbox unavailable; no structural performance estimate is claimed.'
         answer.append(simulation_error)
+    improvements = [dict(title='SQL rewrite' if result['changed'] else 'Keep the original SQL',
+        detail='Historical plan evidence: %d CTE scans and %d sequential scans across %d saved plans. %s' %
+               (sum(n['operator']=='CTE Scan' for g in historical_graphs for n in g),
+                sum(n['operator']=='Seq Scan' for g in historical_graphs for n in g), len(historical_graphs), result['explanation']),
+        improvement_pct=m['improvement_pct'] if result['changed'] else None,
+        scope='Measured on the selected historical query in the local test database; result equivalence verified.',
+        before_ms=m['original']['execution_ms'], after_ms=m['optimized']['execution_ms'])]
+    if simulation_result and action != 'structure_keep':
+        improvements.append(dict(title=LABELS[action], improvement_pct=simulation_result['read_improvement_pct'],
+            detail='Synthetic read benchmark; insert latency change %+.6f ms per row.' % simulation_result['write_latency_delta_ms_per_row'],
+            scope=simulation_result['scope']))
+    for recommendation in recommendations:
+        if recommendation.get('already_present') or recommendation['kind'] == action:
+            continue
+        improvements.append(dict(title=LABELS[recommendation['kind']] + ' · ' + recommendation['table'], detail=recommendation['reason'],
+                                 improvement_pct=None, scope='Recommendation only; improvement not measured for this query.'))
     answer.append('These are separate experiments; their gains cannot be added. No timeout was reproduced or diagnosed from timings alone. No source tables were altered. AI receives masked SQL and numeric/operator metadata only; no raw identifiers, literals or result rows are sent to it. The question is interpreted locally.')
     return dict(answer=answer, question=question, report_query=query, intent=intent,
-                historical_evidence=recent, recommendations=recommendations, result=result,
+                historical_evidence=recent, recommendations=recommendations, result=result, improvements=improvements,
                 simulation=simulation_result, simulation_error=simulation_error, structural_decision=decision)
