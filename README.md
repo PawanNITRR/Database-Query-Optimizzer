@@ -418,25 +418,63 @@ A slower optimized candidate is reported rather than hidden.
 ## Project Structure
 
 ```text
-QueryLab/
+Database Query Optimizzzzer/
 ├── app.py
 ├── database.py
 ├── privacy.py
 ├── optimizer.py
 ├── gnn.py
 ├── rl.py
+├── diagnosis.py
 ├── recommendations.py
 ├── simulation.py
 ├── workload_upload.py
+├── workloads.py
 ├── history.py
+├── evaluate.py
+├── evaluate_ai.py
+├── EVALUATION.json
+├── AI_EVALUATION.json
 ├── demo.sql
 ├── sandbox.sql
 ├── compose.yaml
+├── Dockerfile.sandbox
+├── requirements.txt
+├── pytest.ini
+├── .dockerignore
+├── .gitignore
+├── README.md
+├── DEMO.md
+├── REQUIREMENTS.md
 ├── templates/
+│   └── index.html
 ├── static/
+│   ├── app.js
+│   ├── extended.js
+│   ├── examples.js
+│   ├── tabs.js
+│   ├── sql-editor.js
+│   ├── gnn-graph.js
+│   ├── style.css
+│   └── historic-queries.json
 ├── tests/
-└── docs/
+│   ├── conftest.py
+│   ├── test_demo.py
+│   ├── test_diagnosis.py
+│   ├── test_extensions.py
+│   ├── test_project.py
+│   ├── test_rl.py
+│   ├── test_rl_integration.py
+│   └── test_workload_upload.py
+├── docs/
+│   └── images/
+│       ├── presentation-slide-1.png
+│       └── presentation-slide-2.png
+├── querylab-pipeline.png
+└── database-schema.png
 ```
+
+The root folder name may differ depending on where you clone the project. The tree lists the project source, configuration, documentation, tests, and diagram assets. Local runtime folders (`data/`, `.venv/`, `__pycache__/`, `.pytest_cache/`), Git internals (`.git/`), and UI preview screenshots (`*-preview.png`) are omitted for readability.
 
 ---
 
