@@ -15,5 +15,32 @@ services:
       interval: 3s
       timeout: 3s
       retries: 20
+  ai:
+    image: ollama/ollama:latest
+    profiles: [ai]
+    ports:
+      - "127.0.0.1:11435:11434"
+    volumes:
+      - ai-models:/root/.ollama
+  sandbox:
+    build:
+      context: .
+      dockerfile: Dockerfile.sandbox
+    environment:
+      POSTGRES_DB: simulation
+      POSTGRES_USER: simulator
+      POSTGRES_PASSWORD: simulator_local
+    ports:
+      - "127.0.0.1:55433:5432"
+    volumes:
+      - sandbox-data:/var/lib/postgresql/data
+      - ./sandbox.sql:/docker-entrypoint-initdb.d/sandbox.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U simulator -d simulation"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
 volumes:
   querylab-data:
+  sandbox-data:
+  ai-models:

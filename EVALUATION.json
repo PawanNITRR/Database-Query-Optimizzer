@@ -1,0 +1,254 @@
+{
+  "scope": "Synthetic retail demo; held-out dates and shapes, not a proof of production generalization.",
+  "training_episodes": [
+    {
+      "report": "sales",
+      "epoch": 0,
+      "action": "inline",
+      "reward": 0.6612,
+      "response_ms": 514.8
+    },
+    {
+      "report": "products",
+      "epoch": 0,
+      "action": "inline",
+      "reward": 0.9247,
+      "response_ms": 303.4
+    },
+    {
+      "report": "payments",
+      "epoch": 0,
+      "action": "keep",
+      "reward": 0.0,
+      "response_ms": 636.1
+    },
+    {
+      "report": "sales",
+      "epoch": 1,
+      "action": "keep",
+      "reward": 0.0,
+      "response_ms": 684.9
+    },
+    {
+      "report": "products",
+      "epoch": 1,
+      "action": "inline",
+      "reward": 0.9254,
+      "response_ms": 308.6
+    },
+    {
+      "report": "payments",
+      "epoch": 1,
+      "action": "inline",
+      "reward": 0.7386,
+      "response_ms": 401.3
+    },
+    {
+      "report": "sales",
+      "epoch": 2,
+      "action": "inline",
+      "reward": 0.6606,
+      "response_ms": 496.4
+    },
+    {
+      "report": "products",
+      "epoch": 2,
+      "action": "inline",
+      "reward": 0.9252,
+      "response_ms": 298.2
+    },
+    {
+      "report": "payments",
+      "epoch": 2,
+      "action": "inline",
+      "reward": 0.7522,
+      "response_ms": 407.1
+    }
+  ],
+  "unseen_workloads": [
+    {
+      "report": "sales",
+      "action": "inline",
+      "reward": 0.6526,
+      "result_equality_passed": true,
+      "improvement_pct": 65.26,
+      "response_ms": 479.4
+    },
+    {
+      "report": "products",
+      "action": "inline",
+      "reward": 0.9279,
+      "result_equality_passed": true,
+      "improvement_pct": 92.79,
+      "response_ms": 314.0
+    },
+    {
+      "report": "payments",
+      "action": "inline",
+      "reward": 0.7584,
+      "result_equality_passed": true,
+      "improvement_pct": 75.84,
+      "response_ms": 412.7
+    }
+  ],
+  "unseen_structure": {
+    "status": 200,
+    "action": "keep"
+  },
+  "privacy": {
+    "history_scrubbed": true,
+    "mask_module_modified": false,
+    "note": "Tests validate supported SQL; no universal privacy certification is claimed."
+  },
+  "structural_simulation": [
+    {
+      "action": "index",
+      "baseline": {
+        "read_ms": 1.9205,
+        "insert_ms_per_row": 0.001769,
+        "storage_bytes": 3538944,
+        "read_samples_ms": [
+          2.589,
+          1.87,
+          1.821,
+          1.971
+        ],
+        "write_samples_ms_per_row": [
+          0.00166,
+          0.001878,
+          0.0014479999999999999,
+          0.001906
+        ]
+      },
+      "proposed": {
+        "read_ms": 0.1405,
+        "insert_ms_per_row": 0.003382,
+        "storage_bytes": 3694592,
+        "read_samples_ms": [
+          0.153,
+          0.132,
+          0.14,
+          0.141
+        ],
+        "write_samples_ms_per_row": [
+          0.00445,
+          0.00383,
+          0.002862,
+          0.002934
+        ]
+      },
+      "read_improvement_pct": 92.68,
+      "write_latency_delta_ms_per_row": 0.001613,
+      "storage_delta_bytes": 155648,
+      "reward": 0.7435994217056039,
+      "hypothetical": {
+        "extension": "HypoPG",
+        "original_cost": 1492.49,
+        "hypothetical_cost": 219.59,
+        "estimated_index_bytes": 2080768,
+        "physical_index_bytes": 393216,
+        "storage_estimate_error_pct": 429.17
+      },
+      "scope": "Synthetic 50,000-row scenario in a separate database; not an exact prediction for the source workload.",
+      "source_tables_modified": false,
+      "distributed_network_simulated": false
+    },
+    {
+      "action": "range",
+      "baseline": {
+        "read_ms": 1.9545,
+        "insert_ms_per_row": 0.0014140000000000001,
+        "storage_bytes": 3661824,
+        "read_samples_ms": [
+          1.976,
+          1.948,
+          1.903,
+          1.961
+        ],
+        "write_samples_ms_per_row": [
+          0.001244,
+          0.0015840000000000001,
+          0.001794,
+          0.0009320000000000001
+        ]
+      },
+      "proposed": {
+        "read_ms": 0.169,
+        "insert_ms_per_row": 0.001227,
+        "storage_bytes": 4120576,
+        "read_samples_ms": [
+          0.182,
+          0.161,
+          0.171,
+          0.167
+        ],
+        "write_samples_ms_per_row": [
+          0.001556,
+          0.001054,
+          0.0014,
+          0.00092
+        ]
+      },
+      "read_improvement_pct": 91.35,
+      "write_latency_delta_ms_per_row": -0.000187,
+      "storage_delta_bytes": 458752,
+      "reward": 0.9110272800163449,
+      "hypothetical": null,
+      "scope": "Synthetic 50,000-row scenario in a separate database; not an exact prediction for the source workload.",
+      "source_tables_modified": false,
+      "distributed_network_simulated": false
+    },
+    {
+      "action": "hash",
+      "baseline": {
+        "read_ms": 1.6164999999999998,
+        "insert_ms_per_row": 0.001022,
+        "storage_bytes": 3776512,
+        "read_samples_ms": [
+          1.817,
+          1.348,
+          2.473,
+          1.416
+        ],
+        "write_samples_ms_per_row": [
+          0.001712,
+          0.0009360000000000001,
+          0.00108,
+          0.000964
+        ]
+      },
+      "proposed": {
+        "read_ms": 0.3605,
+        "insert_ms_per_row": 0.001455,
+        "storage_bytes": 3481600,
+        "read_samples_ms": [
+          0.525,
+          0.352,
+          0.36,
+          0.361
+        ],
+        "write_samples_ms_per_row": [
+          0.001968,
+          0.001432,
+          0.001066,
+          0.001478
+        ]
+      },
+      "read_improvement_pct": 77.7,
+      "write_latency_delta_ms_per_row": 0.000433,
+      "storage_delta_bytes": -294912,
+      "reward": 0.6922515061471626,
+      "hypothetical": null,
+      "scope": "Synthetic 50,000-row scenario in a separate database; not an exact prediction for the source workload.",
+      "source_tables_modified": false,
+      "distributed_network_simulated": false
+    }
+  ],
+  "gnn_synthetic_holdout": {
+    "accuracy": 0.965,
+    "precision": 0.958217270194986,
+    "recall": 0.9635854341736695,
+    "nodes": 800,
+    "limitation": "Synthetic cost-threshold labels; no real-workload generalization claim."
+  }
+}

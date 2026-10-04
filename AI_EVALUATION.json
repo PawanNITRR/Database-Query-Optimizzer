@@ -1,0 +1,37 @@
+{
+  "local_service": "Ollama",
+  "raw_query_sent": false,
+  "status": "passed",
+  "result_equality_passed": true,
+  "changed": true,
+  "metrics": {
+    "original": {
+      "execution_ms": 33.069,
+      "planning_ms": 0.105,
+      "rows": 5,
+      "buffer_hits": 5091,
+      "buffer_reads": 0,
+      "runs_ms": [
+        32.126,
+        33.399,
+        32.739,
+        39.916
+      ]
+    },
+    "optimized": {
+      "execution_ms": 2.4475,
+      "planning_ms": 0.191,
+      "rows": 5,
+      "buffer_hits": 1296,
+      "buffer_reads": 0,
+      "runs_ms": [
+        2.649,
+        2.325,
+        2.57,
+        2.247
+      ]
+    },
+    "improvement_pct": 92.6
+  },
+  "response_ms": 2196.4
+}

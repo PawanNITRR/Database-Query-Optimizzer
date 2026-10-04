@@ -50,6 +50,24 @@ If RL chooses keep-original, its reward is zero regardless of timing variation.
 Checking Use local AI adds Ollama as an eligible action, rather than guaranteeing
 that every request calls the model.
 
+## Structural advice and history
+
+For the complete prototype demo, run `docker compose up -d --build --wait` so
+the separate simulation server is started too. With a report loaded:
+
+1. Expand Structural recommendations & sandbox and click Analyze structure.
+2. Show the GNN's numeric evidence, recommended index keys, monthly partition
+   candidate and hash distribution candidate. Existing indexes are marked.
+3. Click Simulate proposal. Show read latency, insert latency per row, storage,
+   RL reward, and HypoPG planner costs if the index strategy was selected.
+4. Explain that this is a synthetic sandbox scenario, not an exact prediction
+   of this source query's production performance.
+5. Click Approve & download review plan. No source DDL is executed.
+6. Expand Masked slow-query logs & plan history, load the sample log, import it,
+   then view history. Point out the absence of raw values and plan filters.
+7. Enter "Why is the monthly sales dashboard slow?" to show one of the three
+   supported natural-language intents.
+
 ## Observed performance
 
 Measured on this machine after loading the enriched dataset. Each response
@@ -69,8 +87,9 @@ timings; these numbers are never injected into results.
 
 For actual LLM rewriting, have Ollama running with the configured model already
 downloaded, check Use local AI, and run a sample before the judging session to
-warm the model. The default is qwen2.5-coder:7b. CPU inference may take much longer
-than database execution; no AI latency claim has been verified here.
+warm the model. The default is qwen2.5-coder:0.5b. The model chooses an eligible
+masked rewrite and a short explanation rather than generating arbitrary SQL.
+CPU inference still depends on hardware; AI_EVALUATION.json records the live check.
 Do not describe Local rules mode as LLM optimization.
 
 The GNN uses message passing with a readout trained on synthetic graphs; it is

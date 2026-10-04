@@ -14,6 +14,8 @@ from privacy import select_only
 LABELS = {'keep': 'Keep original', 'inline': 'Inline simple CTE',
           'deduplicate': 'Remove duplicate IN values', 'combined': 'Combine SQL rules',
           'ai': 'Ask local AI for a rewrite'}
+LABELS.update(index='Composite index', range='Monthly range partitioning',
+              hash='Hash distribution/sharding candidate', structure_keep='Keep structure')
 
 
 def context(sql, graph):

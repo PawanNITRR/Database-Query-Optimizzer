@@ -47,7 +47,7 @@ def test_ai_payload_is_masked(monkeypatch):
         def __exit__(self, *args):
             pass
         def read(self):
-            return json.dumps({'response': json.dumps({'sql': mask.sql, 'explanation': 'No safe rewrite.'})}).encode()
+            return json.dumps({'response': json.dumps({'choice': 'keep', 'explanation': 'No safe rewrite.'})}).encode()
     def fake_model(request, timeout):
         payload = request.data.decode()
         for private in ['confidential_salary', 'private_employees', 'email', 'secret@example.com']:
@@ -58,6 +58,17 @@ def test_ai_payload_is_masked(monkeypatch):
     result, reason, engine = optimizer.optimize(mask.sql, [], True)
     assert mask.restore(result) == mask.tree.sql(dialect='postgres')
     assert engine == 'Ollama + prototype GNN'
+
+
+def test_ai_rejects_ineligible_action(monkeypatch):
+    import optimizer, json
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def read(self): return json.dumps({'response':json.dumps({'choice':'drop_table','explanation':'Invalid'})}).encode()
+    monkeypatch.setattr(optimizer.urllib.request,'urlopen',lambda *args,**kwargs:Response())
+    with pytest.raises(ValueError):
+        optimizer.optimize(Mask('SELECT id FROM orders').sql,[],True)
 
 
 def test_graph_does_not_expose_plan_text():
