@@ -169,3 +169,8 @@ privacy certification is claimed.
 ```
 
 References: [SQLGlot AST API](https://sqlglot.com/), [PostgreSQL read-only transactions](https://www.postgresql.org/docs/17/sql-set-transaction.html), [EXPLAIN](https://www.postgresql.org/docs/17/sql-explain.html).
+# Ask about performance
+
+Open **Ask about performance**, enter “Why is the weekly sales reporting dashboard timing out?” and click **Diagnose**. The answer connects a fixed seven-day sales demo report (23–29 June 2025), recent structurally matching masked plans, current EXPLAIN evidence, a result-equivalent SQL rewrite benchmark, and one RL-selected synthetic structural simulation. Products and payments are also supported. Select **Analyze SQL in the main query box** to associate your own SELECT with a question.
+
+Questions are interpreted locally; the existing privacy/masking path is unchanged. AI, when selected by RL and enabled, receives only masked SQL and operator/numeric metadata. This is a bounded demo assistant, not automatic dashboard discovery. Source runtime measurements and generic 50,000-row sandbox results have different scopes; no combined 85% gain, exact production write-latency prediction, or unobserved timeout cause is claimed. Structural DDL remains a manual review recommendation.

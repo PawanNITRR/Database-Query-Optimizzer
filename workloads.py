@@ -18,4 +18,10 @@ def query_from_input(text):
         intent = 'sales'
     else:
         raise ValueError('Enter SELECT SQL, or ask about monthly sales, products, or payments. Natural-language support uses these three demo reports.')
-    return REPORTS[intent], intent
+    query = REPORTS[intent]
+    if 'weekly' in lower or 'week' in lower:
+        # Fixed week within the synthetic demo's date range, shown to the user.
+        dates = re.findall(r'2025-\d{2}-01', query)
+        query = query.replace(dates[0], '2025-06-23').replace(dates[1], '2025-06-30')
+        intent = 'weekly_' + intent
+    return query, intent

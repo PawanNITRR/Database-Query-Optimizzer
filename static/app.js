@@ -24,10 +24,11 @@ $('run').onclick = async () => {
     $('old').textContent=m.original.execution_ms.toFixed(3)+' ms';$('new').textContent=m.optimized.execution_ms.toFixed(3)+' ms';$('gain').textContent=m.improvement_pct.toFixed(1)+'%';
     $('optimized').textContent=data.optimized_query;$('masked').textContent=data.masked_query;$('masked-result').textContent=data.masked_optimized;$('reason').textContent=data.explanation;$('engine').textContent=data.engine;
     $('verdict').textContent=(data.changed?'Rewrite passed the result-row check.':'No safe structural rewrite was applied. These repeated runs show normal timing variation.') + ' Total response: ' + (data.total_ms / 1000).toFixed(2) + ' seconds.';
+    $('gnn-visual').replaceChildren(gnnVisualization(data.graph));
     $('graph').replaceChildren(...data.graph.map(n=>row(['  '.repeat(n.depth || 0) + n.operator,n.rows,n.cost,n.score])));
     let reasons = document.getElementById('gnn-reasons');
-    if(!reasons){reasons=document.createElement('p');reasons.id='gnn-reasons';reasons.className='note';$('graph').closest('.table-wrap').before(reasons);}
-    reasons.textContent=(data.gnn_explanations || []).map(n=>n.reason).join(' ');
+    if(!reasons){reasons=document.createElement('div');reasons.id='gnn-reasons';$('graph').closest('.table-wrap').before(reasons);}
+    reasons.replaceChildren(...(data.gnn_explanations || []).map(n=>{const p=document.createElement('p');p.textContent=n.reason;p.className='note';return p}));
     $('details').replaceChildren(...[['Planning time (last run)','planning_ms'],['Result rows','rows'],['Shared buffer hits (last run)','buffer_hits'],['Shared buffer reads (last run)','buffer_reads'],['Execution samples (ms)','runs_ms']].map(([name,key])=>row([name,[m.original[key]].flat().join(', '),[m.optimized[key]].flat().join(', ')])));
     $('results').hidden=false;
   }catch(e){$('error').textContent=e.message;$('error').hidden=false}

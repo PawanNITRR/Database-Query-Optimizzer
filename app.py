@@ -43,68 +43,71 @@ def status():
         return jsonify(database=False, ai=ai_available())
 
 
+def optimize_query(data):
+    started = perf_counter()
+    sql = data.get('query', '').strip()
+    if not sql or len(sql) > 20000:
+        raise ValueError('Enter a SELECT query (maximum 20,000 characters).')
+    sql, intent = query_from_input(sql)
+    mask = Mask(sql)
+    original = mask.tree.sql(dialect='postgres')
+    with connect() as conn:
+        configure(conn)
+        if not (conn.info.dbname == 'querylab' and conn.info.host in {'127.0.0.1', 'localhost'}
+                and conn.info.port == 55432) and os.getenv('ALLOW_TEST_DATABASE_BENCHMARK') != '1':
+            raise ValueError('Runtime benchmarking is enabled only for the synthetic demo. Use Analyze structure for metadata-only production analysis, or explicitly enable a separate test database with ALLOW_TEST_DATABASE_BENCHMARK=1.')
+        plan = explain(conn, original)['Plan']
+        graph = gnn.analyze(plan)
+        from sqlglot import exp
+        ordered = any(isinstance(n, (exp.Order, exp.Limit, exp.Offset)) for n in mask.tree.walk())
+        options, seen = {}, {mask.sql}
+        if not ordered:
+            for action in ('inline', 'deduplicate', 'combined'):
+                rewritten = local_rewrite(mask.sql, action)
+                if rewritten not in seen:
+                    options[action] = rewritten
+                    seen.add(rewritten)
+        actions = (['ai'] if data.get('use_ai', True) and not ordered else []) + [
+            a for a in ('combined', 'inline', 'deduplicate') if a in options] + ['keep']
+        # New namespace: AI now selects constrained candidates rather than free SQL.
+        state = 'rewrite_v2|' + context(mask.sql, graph)
+        action, decision = agent.choose(state, actions)
+        try:
+            if action == 'ai':
+                masked_candidate, reason, engine = optimize(mask.sql, graph, True)
+            else:
+                masked_candidate = options.get(action, mask.sql)
+                reason = ('RL selected: ' + LABELS[action] + '. ' + decision)
+                engine = 'RL + local rules + prototype GNN'
+            candidate = mask.restore(masked_candidate)
+            if action == 'keep':
+                candidate = original
+            if any(isinstance(n, (exp.Order, exp.Limit, exp.Offset)) for n in select_only(candidate).walk()):
+                if action != 'keep':
+                    raise ValueError('Rewrite introduced ordering or limits; rejected to preserve result semantics.')
+            metrics = compare(conn, original, candidate)
+        except Exception:
+            # Invalid/failed proposals receive a negative reward, never a speedup reward.
+            if action != 'keep':
+                agent.learn(state, action, -1)
+            raise
+    learning = agent.learn(state, action, runtime_reward(metrics, candidate != original))
+    learning['decision'] = decision
+    if action != 'ai' and graph:
+        top=gnn.explain(graph)[0]
+        reason += ' Plan evidence: ' + top['reason']
+    history.add(original, plan, metrics['original']['execution_ms'])
+    return dict(masked_query=mask.sql, masked_optimized=masked_candidate,
+                   optimized_query=candidate, explanation=reason, engine=engine,
+                   graph=graph, metrics=metrics, changed=candidate != original,
+                   total_ms=round((perf_counter() - started) * 1000, 1), rl=learning,
+                   gnn_explanations=gnn.explain(graph), intent=intent)
+
+
 @app.post('/api/optimize')
 def run():
-    started = perf_counter()
     try:
-        data = request.get_json()
-        sql = data.get('query', '').strip()
-        if not sql or len(sql) > 20000:
-            raise ValueError('Enter a SELECT query (maximum 20,000 characters).')
-        sql, intent = query_from_input(sql)
-        mask = Mask(sql)
-        original = mask.tree.sql(dialect='postgres')
-        with connect() as conn:
-            configure(conn)
-            if not (conn.info.dbname == 'querylab' and conn.info.host in {'127.0.0.1', 'localhost'}
-                    and conn.info.port == 55432) and os.getenv('ALLOW_TEST_DATABASE_BENCHMARK') != '1':
-                raise ValueError('Runtime benchmarking is enabled only for the synthetic demo. Use Analyze structure for metadata-only production analysis, or explicitly enable a separate test database with ALLOW_TEST_DATABASE_BENCHMARK=1.')
-            plan = explain(conn, original)['Plan']
-            graph = gnn.analyze(plan)
-            from sqlglot import exp
-            ordered = any(isinstance(n, (exp.Order, exp.Limit, exp.Offset)) for n in mask.tree.walk())
-            options, seen = {}, {mask.sql}
-            if not ordered:
-                for action in ('inline', 'deduplicate', 'combined'):
-                    rewritten = local_rewrite(mask.sql, action)
-                    if rewritten not in seen:
-                        options[action] = rewritten
-                        seen.add(rewritten)
-            actions = (['ai'] if data.get('use_ai', True) and not ordered else []) + [
-                a for a in ('combined', 'inline', 'deduplicate') if a in options] + ['keep']
-            # New namespace: AI now selects constrained candidates rather than free SQL.
-            state = 'rewrite_v2|' + context(mask.sql, graph)
-            action, decision = agent.choose(state, actions)
-            try:
-                if action == 'ai':
-                    masked_candidate, reason, engine = optimize(mask.sql, graph, True)
-                else:
-                    masked_candidate = options.get(action, mask.sql)
-                    reason = ('RL selected: ' + LABELS[action] + '. ' + decision)
-                    engine = 'RL + local rules + prototype GNN'
-                candidate = mask.restore(masked_candidate)
-                if action == 'keep':
-                    candidate = original
-                if any(isinstance(n, (exp.Order, exp.Limit, exp.Offset)) for n in select_only(candidate).walk()):
-                    if action != 'keep':
-                        raise ValueError('Rewrite introduced ordering or limits; rejected to preserve result semantics.')
-                metrics = compare(conn, original, candidate)
-            except Exception:
-                # Invalid/failed proposals receive a negative reward, never a speedup reward.
-                if action != 'keep':
-                    agent.learn(state, action, -1)
-                raise
-        learning = agent.learn(state, action, runtime_reward(metrics, candidate != original))
-        learning['decision'] = decision
-        if action != 'ai' and graph:
-            top=gnn.explain(graph)[0]
-            reason += ' Plan evidence: ' + top['reason']
-        history.add(original, plan, metrics['original']['execution_ms'])
-        return jsonify(masked_query=mask.sql, masked_optimized=masked_candidate,
-                       optimized_query=candidate, explanation=reason, engine=engine,
-                       graph=graph, metrics=metrics, changed=candidate != original,
-                       total_ms=round((perf_counter() - started) * 1000, 1), rl=learning,
-                       gnn_explanations=gnn.explain(graph), intent=intent)
+        return jsonify(optimize_query(request.get_json()))
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
     except Exception:
@@ -170,6 +173,17 @@ def run_simulation():
         return jsonify(simulation=result, rl=learning, recommendations=proposal['recommendations'])
     except Exception:
         return jsonify(error='Simulation unavailable. Start the sandbox with docker compose up -d --build --wait. Source tables were not changed.'), 400
+
+
+@app.post('/api/diagnose')
+def diagnose_question():
+    try:
+        from diagnosis import diagnose
+        return jsonify(diagnose(request.get_json(), gnn, agent, history, optimize_query))
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    except Exception:
+        return jsonify(error='Could not diagnose this workload. Check PostgreSQL and the report SQL. No source tables were changed.'), 400
 
 
 @app.post('/api/approve')

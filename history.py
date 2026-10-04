@@ -66,6 +66,11 @@ class History:
         tree=Mask(query).tree
         fingerprint=hashlib.sha256('|'.join(type(n).__name__ for n in tree.walk()).encode()).hexdigest()
         matches=[r for r in self.list() if r['fingerprint']==fingerprint]
+        def operators(node):
+            return [node['Node Type']] + [op for child in node.get('Plans', []) for op in operators(child)]
+        recent_plans = [dict(record_id=r['id'], created_at=r['created_at'],
+                            operators=operators(r['plan']), duration_ms=r['duration_ms']) for r in matches[:5]]
         return {'structurally_similar_logs':len(matches),
+                'recent_plan_summaries':recent_plans,
                 'median_logged_duration_ms':median(r['duration_ms'] for r in matches) if matches else None,
                 'scope':'Structure similarity only; identifiers and values are not used to link history.'}
