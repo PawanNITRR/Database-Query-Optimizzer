@@ -1,13 +1,187 @@
 # QueryLab
 
-A local SQL optimizer: enter a SELECT, mask it, analyze its execution-plan graph,
-choose a rewrite with RL, restore SQL and compare PostgreSQL runtimes.
-Optional collapsed panels provide structural advice, a synthetic simulation
-sandbox and masked log history. No accounts or production deployment automation.
+**A local PostgreSQL query optimizer with private AI analysis, historical-workload diagnosis, and a data-growth prediction layer.**
 
-## Run on Windows
+QueryLab accepts a SELECT query, masks sensitive SQL names and values, analyzes its execution plan with a prototype GNN, selects a rewrite strategy with RL, and verifies the result using real PostgreSQL execution. A simple dark interface separates query comparisons, historical diagnosis, and predictions into horizontal tabs.
 
-Requires Python 3.11+, Docker Desktop (running), and optionally Ollama.
+Built as a hackathon prototype. The application runs locally; it does not apply structural changes to the source database.
+
+## Objectives
+
+- Keep raw SQL identifiers, literal values, and database result rows out of AI requests.
+- Identify potentially expensive operations using an execution-plan graph.
+- Select supported SQL rewrites using measured feedback rather than assuming every rewrite is faster.
+- Verify equivalent results and compare original versus selected query runtimes.
+- Diagnose relevant past queries using a user statement and an uploaded history file.
+- Explore index and partition recommendations in a separate synthetic database.
+- Explain possible data-growth effects with a clearly labeled scale estimate.
+
+## Project flows
+
+The overview below is extracted from the supplied **Codeutsava presentation**. The diagrams that follow expand it to show the implemented validation and measurement steps.
+
+![QueryLab pipeline, Prediction Layer, and Performance Layer from the presentation](docs/images/presentation-slide-1.png)
+
+### 1. Query optimization
+
+```mermaid
+flowchart LR
+    A[Input SELECT SQL] --> B[Parse and validate]
+    B --> C[Mask names and literal values]
+    B --> D[Local PostgreSQL EXPLAIN]
+    D --> E[GNN scores plan operators]
+    C --> F[RL selects an eligible strategy]
+    E --> F
+    F --> G[Local rewrite or local AI candidate selection]
+    G --> H[Restore SQL using the local mapping]
+    H --> I[Check equivalent result rows]
+    I --> J[Benchmark original and selected SQL]
+    J --> K[Show SQL, timings and GNN graph]
+    J --> L[Update RL reward and local execution history]
+```
+
+The GNN consumes a graph of plan operators and numeric features. RL chooses an eligible action. When AI is enabled **and selected by RL**, Ollama chooses among constrained masked rewrite candidates. The original SQL mapping stays inside the application.
+
+The result tabs are **Overview**, **Optimized SQL**, **GNN graph**, **AI privacy**, and **Runtime details**. SQL inputs and outputs have syntax highlighting. The privacy tab labels its two queries **Input hashed query** and **Hashed output query received from AI**; when RL uses local rules, the output is produced locally and the engine label identifies that path.
+
+### 2. Ask about performance
+
+```mermaid
+flowchart LR
+    A[User diagnosis statement] --> C[Match relevant historical queries locally]
+    B[Upload multiple queries as SQL or JSON] --> C
+    C --> D[Analyze uploaded plans or fresh EXPLAIN plans]
+    D --> E[Select safe SQL rewrites]
+    E --> F[Check results and measure local runtimes]
+    F --> G[Improvements with highlighted gains and comparison bars]
+    D --> H[Suggest structural changes]
+    H --> I[Separate synthetic strategy benchmarks]
+    I --> G
+```
+
+Enter a statement such as **“Why is the sales report slow? Check its joins.”** and upload a history file. Matching uses supported report topics, explicit table names, and operations such as joins, sorting, or aggregation. It is a small local matching system, not an unrestricted chatbot.
+
+Only matching queries are measured. Original query numbers remain visible, and the output contains only **Improvements**: point-wise suggestions, highlighted measured gains, SQL, and baseline/proposed bars. An unmatched statement produces a message instead of analyzing unrelated queries.
+
+Historical durations are supplied context. Improvement percentages use fresh measurements on the local test database. SQL-only files have no historical execution-plan evidence, so fresh EXPLAIN plans are obtained. Generic structural sandbox gains are labeled separately and are never added to SQL gains.
+
+### 3. Prediction Layer
+
+```mermaid
+flowchart LR
+    A[Current SQL in the editor] --> B[EXPLAIN, GNN and schema metadata]
+    B --> C[Index and partition suggestions]
+    C --> D[RL selects one structural strategy]
+    D --> E[Benchmark in a separate synthetic database]
+    E --> F[Measured baseline and proposed read times]
+    F --> G[Move the data-scale slider from 1x to 100x]
+    G --> H[Estimated runtimes and time saved]
+```
+
+Open **Prediction Layer** after entering SQL. Analysis runs automatically. The tab shows detailed suggestions and a slider with **0.1× increments**, with labeled markers at 1×, 10×, 20×, …, 100×. It prominently displays time saved in milliseconds, baseline time, proposed time, and scaled synthetic row count. It does not display an improvement percentage.
+
+The measured baseline is a separate **50,000-row synthetic scenario**. At 1×, the times are measured; larger scales use linear extrapolation:
+
+```text
+Estimated baseline time = measured baseline time × scale
+Estimated proposed time = measured proposed time × scale
+Estimated time saved   = estimated baseline time − estimated proposed time
+Synthetic row count    = 50,000 × scale
+```
+
+This assumes unchanged plan and selectivity. It does not simulate a real 100× source database, memory pressure, different plans, or distributed network behavior. The selected strategy is evaluated separately; the app does not measure the combined effect of all suggestions.
+
+## Demo database
+
+**Database:** `querylab` · **Total:** 415,000 synthetic records · **PostgreSQL:** 17
+
+| Table | Attributes | Records |
+| --- | --- | ---: |
+| `customer` | id, name, email, city, created_at | 10,000 (10k) |
+| `product` | id, name, category, price, stock | 5,000 (5k) |
+| `orders` | id, customer_id, product_id, quantity, amount, status, order_date | 200,000 (200k) |
+| `transaction` | id, order_id, amount, payment_method, status, transaction_date | 200,000 (200k) |
+
+![Database schema from the presentation](docs/images/presentation-slide-2.png)
+
+The presentation uses simplified `VARCHAR`, `DECIMAL`, and `TIMESTAMP` labels. The actual seed uses `TEXT`, `NUMERIC(10,2)`, and `DATE`, as shown below. The seed defines the exact record counts listed above.
+
+```mermaid
+erDiagram
+    customer ||--o{ orders : places
+    product ||--o{ orders : included_in
+    orders ||--o| transaction : has_payment
+    customer {
+        integer id PK
+        text name
+        text email UK
+        text city
+        date created_at
+    }
+    product {
+        integer id PK
+        text name
+        text category
+        numeric price
+        integer stock
+    }
+    orders {
+        integer id PK
+        integer customer_id FK
+        integer product_id FK
+        integer quantity
+        numeric amount
+        text status
+        date order_date
+    }
+    transaction {
+        integer id PK
+        integer order_id FK,UK
+        numeric amount
+        text payment_method
+        text status
+        date transaction_date
+    }
+```
+
+One order contains one product to keep the schema simple. `order_id` is unique in `transaction`; every seeded order has a transaction. Names, contact details, cities, prices, quantities, payment methods, and discounts are synthetic. Order dates span 2024–2025.
+
+Use double quotes when querying the transaction table:
+
+```sql
+SELECT id, amount, payment_method
+FROM "transaction"
+LIMIT 10;
+```
+
+## Technology stack
+
+| Component | Technology / role |
+| --- | --- |
+| Backend | Python 3.11+, Flask |
+| SQL parsing and masking | SQLGlot, per-request HMAC pseudonyms, literal placeholders |
+| Database access | Psycopg 3, local PostgreSQL 17 |
+| GNN | NumPy; two message-passing layers and a trained readout |
+| RL | Contextual UCB bandit with local SQLite state |
+| Optional AI | Ollama, default `qwen2.5-coder:0.5b` |
+| Structural experiments | Separate PostgreSQL instance with HypoPG and synthetic tables |
+| Local history | SQLite, scrubbed plan metadata, Fernet-encrypted replay SQL |
+| UI | HTML, CSS, JavaScript, SVG GNN graphs, syntax highlighting and tabs |
+| Services and testing | Docker Compose, pytest |
+
+## Setup
+
+### Requirements
+
+- Python **3.11 or newer**.
+- Docker Desktop installed and running, with Docker Compose available.
+- Internet access for the first package installation and Docker image build.
+- Optional: Ollama running locally with the default model downloaded.
+- Free local ports **5000**, **55432**, and **55433**.
+
+### Start on Windows
+
+Open PowerShell in the project directory, then run:
 
 ```powershell
 python -m venv .venv
@@ -16,173 +190,272 @@ docker compose up -d --build --wait
 .\.venv\Scripts\python.exe app.py
 ```
 
-Open http://127.0.0.1:5000 and click **Load example**. To use AI, install Ollama and run `ollama pull qwen2.5-coder:0.5b` first. Otherwise uncheck **Use local AI** to test the pipeline with conservative local SQL rules. AI failure is reported explicitly; it is never silently presented as an AI result.
+Open **http://127.0.0.1:5000/**. Keep the Flask terminal running. No environment file or account is required for the default demo.
 
-For your existing local database, set `DATABASE_URL` before starting:
+The first Docker startup creates and seeds both databases. Later startups reuse their saved volumes.
+
+### Start on macOS / Linux
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+docker compose up -d --build --wait
+.venv/bin/python app.py
+```
+
+### Enable local AI
+
+With native Ollama installed and running:
 
 ```powershell
-$env:DATABASE_URL = 'postgresql://username:password@127.0.0.1:5432/database_name'
-$env:OLLAMA_MODEL = 'qwen2.5-coder:0.5b'
+ollama pull qwen2.5-coder:0.5b
+```
+
+The default endpoint is `http://127.0.0.1:11434`. Reload the page after the model is available. **Use local AI** makes the model eligible for RL selection; it does not force every query through the model. When AI is unavailable, uncheck the option to use local rewrite rules with GNN and RL. If a selected AI request fails, the app reports the failure rather than silently calling it an AI result.
+
+Alternatively, use the optional Docker AI service:
+
+```powershell
+docker compose --profile ai up -d ai
+docker compose exec ai ollama pull qwen2.5-coder:0.5b
+$env:OLLAMA_BASE_URL = 'http://127.0.0.1:11435'
 .\.venv\Scripts\python.exe app.py
 ```
 
-Use a SELECT-only database role on a local test database. Runtime comparisons default to the synthetic querylab database on port 55432. For another explicitly designated test database, set ALLOW_TEST_DATABASE_BENCHMARK=1. Use Analyze structure for production metadata-only analysis. Each comparison uses a read-only repeatable-read transaction with a 10-second timeout per statement. Arbitrary user-defined functions and write statements are rejected, but this is a prototype SQL gate, not a production sandbox. Built-in volatile functions may still cause side effects or inconsistent results; use ordinary deterministic SELECT queries.
+Use native Ollama or the container endpoint as appropriate. Only local HTTP Ollama endpoints are accepted.
 
-## Demo database
+### Configuration
 
-The synthetic retail database contains 10,000 customers, 5,000 products,
-200,000 orders and 200,000 payment transactions. Orders reference customer
-and product; each transaction references one order. One order contains one
-product to keep the schema simple. Customer contact details are synthetic.
+Set environment variables in the terminal before starting Flask:
 
-Names, products, cities, purchase quantities, discounts, dates and payment methods
-are varied synthetic data. Orders span 2024-2025, with independently mixed
-customer/product/date/payment dimensions. Amounts match the product price times
-quantity, less a synthetic 0-15% discount; payment amounts match orders.
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `DATABASE_URL` | Local `querylab` connection on port 55432 | Source/test PostgreSQL connection |
+| `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Local Ollama endpoint |
+| `OLLAMA_MODEL` | `qwen2.5-coder:0.5b` | Model used for candidate selection |
+| `RL_STATE_PATH` | `data/rl.sqlite3` | RL policy file |
+| `ALLOW_TEST_DATABASE_BENCHMARK` | Unset | Set to `1` only for an explicitly designated alternative test database |
 
-The Load example button joins all four tables. Use double quotes for
-the transaction table: `SELECT * FROM "transaction" LIMIT 100;`.
+Runtime comparisons normally run only on the synthetic demo database. For a separate local test database, use a SELECT-only role and explicitly enable benchmarking:
 
-Fresh Docker volumes are initialized automatically. To upgrade an existing
-demo volume or safely re-run the seed without resetting data:
+```powershell
+$env:DATABASE_URL = 'postgresql://username:password@127.0.0.1:5432/test_database'
+$env:ALLOW_TEST_DATABASE_BENCHMARK = '1'
+.\.venv\Scripts\python.exe app.py
+```
+
+Keep these settings for local test environments. The simulator remains a separate fixed local database on port 55433.
+
+## Using the application
+
+### Query comparison
+
+1. Click **Monthly sales**, **Product report**, or **Payment report**, or enter a deterministic SELECT query.
+2. Choose whether local AI is eligible.
+3. Click **Optimize & compare**.
+4. Use the result tabs to inspect timings, selected SQL, the interactive GNN graph, AI privacy, and runtime details.
+
+The examples deliberately contain an unnecessary full-table materialized CTE to demonstrate a supported optimization. Their speedups do not represent every SQL workload.
+
+### Historical diagnosis
+
+1. Open **Ask about performance**.
+2. Enter a statement such as **“Why is the sales report slow? Check its joins.”**
+3. Choose a `.sql` or `.json` history file containing **2–10 SELECT queries**, under **200 KB**. Each query is limited to 20,000 characters.
+4. Click **Analyze history file**.
+5. Read **Improvements**. The summary shows matched query numbers, successful measurements, and the combined fresh SQL runtime change for those queries.
+
+A sample three-report file is provided at [static/historic-queries.json](static/historic-queries.json) and through **Download sample history file** in the UI.
+
+SQL files contain semicolon-separated statements:
+
+```sql
+SELECT id, amount FROM orders WHERE status = 'completed';
+SELECT category, COUNT(*) FROM product GROUP BY category;
+```
+
+JSON files contain SQL strings or objects. `plan` and `duration_ms` are optional:
+
+```json
+[
+  {
+    "query": "SELECT id, amount FROM orders WHERE status = 'completed'",
+    "duration_ms": 120,
+    "plan": {
+      "Plan": {
+        "Node Type": "Seq Scan",
+        "Plan Rows": 50000,
+        "Total Cost": 6000
+      }
+    }
+  },
+  {
+    "query": "SELECT category, COUNT(*) FROM product GROUP BY category"
+  }
+]
+```
+
+These durations and plans are user-supplied evidence, not trusted measurements. Sensitive plan fields are scrubbed. The application obtains fresh measurements to establish runtime gains. Uploaded queries must reference tables present in the configured test database.
+
+**“Improve overall query performance”** analyzes the entire file. Specific topics or operations filter it. Matching is local and limited; the diagnosis statement is not sent to the model. Query histories from pgAdmin or other tools are not captured automatically—you must supply a file or run queries through QueryLab.
+
+### Prediction Layer
+
+1. Enter SQL in the main editor.
+2. Open **Prediction Layer**; analysis and the selected synthetic experiment run automatically.
+3. Read the suggested changes and their tradeoffs.
+4. Move the smooth **1×–100×** slider to see estimated runtimes and time saved.
+
+No source DDL is applied. This tab contains only suggestions/improvements and the scale display; the previous simulation/download buttons and extra panels have been removed.
+
+## Measurement, GNN and RL
+
+- **Result check:** PostgreSQL compares both result multisets with bidirectional `EXCEPT ALL` in a read-only, repeatable-read transaction. Result rows stay inside PostgreSQL.
+- **Timings:** both queries are warmed, then run four times in alternating order. The displayed execution time is the median. Planning time and buffer statistics are also available.
+- **Limits:** each statement has a 10-second timeout and a 2-second lock timeout. `ORDER BY`, `LIMIT`, and `OFFSET` queries are kept unchanged because multiset comparison cannot verify ordering semantics.
+- **Supported rewrites:** deduplicate IN values and inline eligible single-use plain-table `SELECT *` CTEs by replacing `MATERIALIZED` with `NOT MATERIALIZED`. Complex or reused CTEs are kept unchanged.
+- **GNN:** a small network trained end to end on synthetic graphs. It scores operators using graph connections and numeric plan features. Scores are prototype signals, not calibrated bottleneck probabilities.
+- **RL:** a contextual UCB bandit chooses an action using structural query context. It explores untested actions and then balances learned mean reward with exploration. This is a one-step adaptive policy, not a multi-step production tuning agent.
+- **Rewrite reward:** fractional median runtime gain, clipped to `[-1, 1]`; unchanged queries get zero. Differences below 3% or 0.05 ms get zero to reduce noise. Failed/invalid proposals receive `-1`.
+- **Structural experiments:** a separate 50,000-row PostgreSQL sandbox has baseline, indexed, monthly-partitioned, and hash-partitioned variants. HypoPG can estimate index planner cost and size. Synthetic inserts are rolled back. Structural RL reward includes read gain and write/storage penalties.
+
+No universal speedup is promised. Measurements may fluctuate with caches and machine load, and regressions are shown. PostgreSQL execution times exclude network transfer and browser rendering.
+
+## Privacy and local storage
+
+The AI privacy layer performs **reversible pseudonymization, not ciphertext encryption**. Fresh HMAC-based tokens replace identifiers; placeholders replace literals; comments are removed from the AI input. SQL structure remains visible. The reverse mapping exists only for the current request.
+
+Only masked SQL, eligible candidate labels, allowlisted plan operators, numeric features and GNN evidence go to local Ollama. Raw identifiers, literals, result rows, and uploaded diagnosis statements are excluded.
+
+Successfully benchmarked queries are saved for local history with scrubbed execution plans and durations. Replay SQL is separately encrypted with Fernet. Its local key is stored beside the history file; both are excluded from Git. This storage encryption does not replace or change the AI masking path.
+
+| Local file | Contents |
+| --- | --- |
+| `data/rl.sqlite3` | Structural contexts, action counts and learned rewards; no raw SQL |
+| `data/history.sqlite3` | Masked history, numeric/operator metadata, durations and encrypted replay SQL |
+| `data/history.key` | Local Fernet key needed to decrypt replay history |
+
+The key resides on the same machine, so this is local storage protection, not an isolated key-management service. Back up the history and key together if you need replay history after moving the project.
+
+## Directory structure
+
+```text
+QueryLab/
+├── app.py                       # Flask application and API routes
+├── database.py                  # Connections, EXPLAIN and runtime comparison
+├── privacy.py                   # SELECT validation, masking and restoration
+├── gnn.py                       # Synthetic-trained plan GNN
+├── rl.py                        # Contextual UCB policy and rewards
+├── optimizer.py                 # Local rewrites and optional Ollama selection
+├── recommendations.py           # Catalog-based index/partition suggestions
+├── simulation.py                # Separate PostgreSQL strategy benchmarks
+├── workload_upload.py           # Multi-query upload parsing and diagnosis matching
+├── history.py                   # Masked plans and encrypted replay history
+├── workloads.py                 # Supported demo natural-language report templates
+├── diagnosis.py                 # Legacy single-history diagnosis API helper
+├── demo.sql                     # 415,000-row retail seed and indexes
+├── sandbox.sql                  # Synthetic experiment tables and HypoPG setup
+├── compose.yaml                 # PostgreSQL services and optional Ollama service
+├── Dockerfile.sandbox            # PostgreSQL image with HypoPG
+├── requirements.txt             # Pinned Python dependencies
+├── pytest.ini                   # Test configuration
+├── templates/
+│   └── index.html               # Main page
+├── static/
+│   ├── style.css                # Dark theme and responsive layouts
+│   ├── app.js                   # Main SQL comparison behavior
+│   ├── extended.js              # History upload, prediction slider and visuals
+│   ├── tabs.js                  # Horizontal accessible tab navigation
+│   ├── sql-editor.js            # Local SQL syntax highlighting
+│   ├── gnn-graph.js             # Interactive SVG execution-plan graph
+│   ├── examples.js              # Sales, product and payment SQL examples
+│   └── historic-queries.json    # Sample three-query upload
+├── docs/
+│   └── images/
+│       ├── presentation-slide-1.png  # Flow image extracted from the supplied PPTX
+│       └── presentation-slide-2.png  # Schema image extracted from the supplied PPTX
+├── tests/                       # Privacy, rewrite, RL and PostgreSQL integration checks
+├── data/                        # Runtime SQLite state and history key; ignored by Git
+├── evaluate.py                  # Held-out workload and simulation evaluation
+├── evaluate_ai.py               # Real local AI pipeline evaluation
+├── EVALUATION.json              # Saved evaluation evidence
+├── AI_EVALUATION.json           # Saved local AI evaluation evidence
+├── DEMO.md                      # Earlier demo notes and results
+├── REQUIREMENTS.md              # Problem-statement implementation notes
+└── README.md                    # Current setup and usage guide
+```
+
+The source PowerPoint is not needed at runtime. Its two embedded images are copied into `docs/images` so the README is portable. Mermaid diagrams render on GitHub and other compatible Markdown viewers.
+
+## Viewing the data in pgAdmin
+
+For pgAdmin running on your computer, register a PostgreSQL server with:
+
+| Setting | Value |
+| --- | --- |
+| Host | `127.0.0.1` |
+| Port | `55432` |
+| Database / maintenance database | `querylab` |
+| Username | `querylab` |
+| Password | `querylab_local` |
+
+These are local demo credentials from `compose.yaml`. Open **Databases → querylab → Schemas → public → Tables**, then right-click a table and select **View/Edit Data**. Docker Desktop shows the containers; pgAdmin is the table browser. If pgAdmin runs inside another container on the Compose network, use service hostname `db` and port `5432` instead of host loopback.
+
+## Tests and evaluation
+
+Start both PostgreSQL services, then run:
+
+```powershell
+docker compose up -d --build --wait
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+The suite includes database integration checks; run it with the local databases available. Tests isolate their RL policy and history state. The latest full verification during development passed **52 tests**.
+
+Optional evaluation scripts:
+
+```powershell
+.\.venv\Scripts\python.exe evaluate.py
+.\.venv\Scripts\python.exe evaluate_ai.py
+```
+
+The AI evaluation requires the configured local model. Saved JSON reports are evidence from a particular run, not fixed performance guarantees or a claim of production calibration.
+
+## Troubleshooting and service management
+
+| Issue | What to check |
+| --- | --- |
+| PostgreSQL not connected | Docker Desktop is running; `docker compose ps` shows healthy `db` and `sandbox` services |
+| Tables missing after an older installation | Re-run `demo.sql` using the command below |
+| AI model unavailable | Ollama is running, the configured model is downloaded, and the endpoint matches native port 11434 or container port 11435 |
+| History diagnosis has no matches | Adjust the statement or include matching report/table/operation queries in the file |
+| Sandbox unavailable | Run `docker compose up -d --build --wait`; check `docker compose logs sandbox` |
+| No rewrite or slower result | The query may have no eligible rule, RL may explore keeping it, or the measured change may be a regression |
+| UI changes not visible | Refresh the browser; restart Flask after template changes |
+| Port already used | Stop the conflicting local process or inspect the configured services before changing ports |
+
+Re-run the deterministic demo seed on an existing volume:
 
 ```powershell
 Get-Content -Raw demo.sql | docker compose exec -T db psql -U querylab -d querylab -v ON_ERROR_STOP=1
 ```
 
-The seed retains order IDs, fills missing records, and refreshes synthetic
-names and purchase details deterministically. The complete seed is transactional
-and uses conflict checks to avoid duplicate records. Seeding is a setup step;
-the app never regenerates the dataset when running a query.
-View the four tables in pgAdmin under querylab → Schemas → public → Tables.
+The seed avoids duplicate IDs and refreshes synthetic purchase details. It is a setup operation that writes demo records; the application does not reseed data during query analysis.
 
-## What each step does
-
-1. SQLGlot parses one PostgreSQL SELECT.
-2. A fresh per-request HMAC key masks all identifiers; literal placeholders hide values and comments are removed. The reverse mapping stays in process memory and is discarded after the request. This is reversible pseudonymization, **not encryption**: SQL structure and repeated-value patterns remain visible.
-3. PostgreSQL supplies an estimated execution tree. A small NumPy graph neural network applies two message-passing layers and a readout trained end to end on synthetic graphs. It demonstrates the architecture rather than a production-quality optimizer. Only allowlisted operator labels, numeric estimates and GNN scores accompany masked SQL to Ollama. Raw plan filters, relation names, SQL values and result rows are excluded.
-4. When RL selects AI, Ollama chooses among eligible masked rewrite candidates using GNN evidence. The displayed reason is grounded in the selected action and actual GNN node metadata, avoiding unverified model prose. Constrained JSON output avoids invented identifiers and lowers latency. The app restores known pseudonyms locally. The optimized SQL and both masked versions are displayed.
-5. PostgreSQL checks multiset result equality using bidirectional EXCEPT ALL in one snapshot. Queries with ORDER BY, LIMIT or OFFSET remain unchanged because the multiset check cannot validate their ordering. Both queries are warmed, then run four times in alternating order using EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON). The UI shows median execution time, last-run planning time, result count and buffer statistics. No result rows are fetched into the application.
-
-Local rules remove duplicate IN-list values and change single-use plain-table
-`SELECT *` CTEs from MATERIALIZED to NOT MATERIALIZED. The latter allows
-PostgreSQL to push filters down and use the existing status/date index.
-Complex or reused CTEs are not inlined by this rule. All changed queries still
-pass the database result check. Faster execution is not promised for arbitrary
-queries; unchanged queries and regressions are shown honestly. Result comparison
-can be costly and requires types supporting EXCEPT ALL. Runtime measurements
-exclude client transfer time and may fluctuate with cache state and load.
-
-## Hackathon demonstration
-
-See [DEMO.md](DEMO.md) for the demo sequence and measured report timings.
-The page has Monthly sales, Product report, and Payment report example buttons.
-Each uses an intentionally inefficient full-table materialized CTE as a clear
-teaching example. They are not representative of every SQL workload.
-
-With AI unchecked, GNN analysis and RL select a deterministic rewrite, labeled
-RL + local rules. Checking AI makes Ollama eligible; RL may choose another action.
-The default small model is qwen2.5-coder:0.5b; OLLAMA_MODEL can select a larger one.
-Only masked SQL and the top three GNN evidence nodes are sent. The model is kept
-loaded for 30 minutes, with a 45-second timeout and a 256-token generation limit.
-Response time is displayed separately from PostgreSQL execution time. See
-AI_EVALUATION.json for the actual live AI verification result.
-
-An optional Docker Ollama profile is included for machines without native Ollama:
-`docker compose --profile ai up -d ai`, then
-`docker compose exec ai ollama pull qwen2.5-coder:0.5b`.
-Set OLLAMA_BASE_URL=http://127.0.0.1:11435 for this container. Native Ollama uses
-port 11434. Only loopback model endpoints are allowed.
-
-## Scope
-
-Implements the requested five-step MVP plus a small RL action-selection loop.
-Includes metadata-only index/partition/sharding-candidate advice, HypoPG planner
-simulation, synthetic write-latency/storage probes, masked log ingestion and
-approval/download for manual review. Actual distributed sharding and production
-deployment are intentionally not executed.
-
-## Reinforcement learning
-
-The RL component is a contextual UCB bandit, a one-step form of reinforcement
-learning. It selects among keeping the original, inlining eligible CTEs,
-deduplicating IN values, combining distinct rewrites, and asking Ollama when
-Use local AI is checked. That checkbox makes AI eligible; RL may select a local
-action instead. Ineligible/no-op rewrite actions are removed. Ordered/limited
-queries only allow keeping the original.
-
-Context uses coarse structural features: join count, materialized CTE/IN flags,
-estimated row-count magnitude and a GNN-score bucket. It never uses identifiers
-or literal values. New actions are tried first, then an upper-confidence-bound
-policy balances mean reward with exploration. There is no preloaded reward data.
-
-Reward is (original median runtime - candidate median runtime) / original runtime,
-clipped to [-1, 1]. Unchanged queries earn zero, and differences below 3% or
-0.05 ms earn zero to reduce noise. Invalid or failed rewrite proposals earn -1.
-Q(context, action) is updated by the incremental mean of observed rewards.
-Each action executes once through the existing comparison pipeline; RL adds no
-extra database benchmark runs. Exploration can intentionally keep the original
-or try a less successful action. No universal speedup is promised.
-
-Learned counts and Q values persist locally in `data/rl.sqlite3`, ignored by Git.
-The SQLite policy stores no SQL, query hashes, row data, credentials or names.
-Set RL_STATE_PATH to select another policy file. Tests use isolated temporary
-policies and do not train the live app. This is a small adaptive prototype,
-not a multi-step RL engine for indexes or sharding.
-
-The structural policy has a separate context namespace. It selects composite-index,
-monthly-range-partition, hash-distribution or keep strategies and learns a reward
-from synthetic read-time gains minus write-latency/storage penalties. Recommendations
-come from query predicates and schema catalogs. Measurements represent a generic
-scenario, not an exact source-schema simulation.
-
-## Additional problem-statement modules
-
-Expand **Structural recommendations & sandbox**, click Analyze structure, then
-Simulate proposal. Review GNN evidence, candidate DDL, read/write/storage metrics,
-and HypoPG cost/size estimates. Approve & download saves a review package; it never
-executes source DDL. The separate simulator database runs on port 55433 and is
-automatically initialized with 50,000 generated rows, indexes, monthly range
-partitions, and four hash partitions. No source rows are copied there.
-
-Expand **Masked slow-query logs & plan history** to import a JSON array or view
-history. Each record contains query, plan and optional duration_ms. Raw names,
-filters, literals and other plan text are removed before persistence. Runtime
-comparisons automatically add scrubbed history. Structural analysis does not
-execute queries or retrieve result rows.
-
-You can enter a natural question such as "Why is the monthly sales dashboard slow?"
-in the query box. Three supported intents (sales/products/payments) use visible
-demo SQL templates. This is not unrestricted natural-language SQL generation.
-
-See [REQUIREMENTS.md](REQUIREMENTS.md) for scope and validation limits, and
-[EVALUATION.json](EVALUATION.json) for actual held-out workload and simulation
-measurements. In particular, no exact-production-simulation or enterprise
-privacy certification is claimed.
-
-## Tests
+Stop Flask with **Ctrl+C**. Stop containers while keeping saved database volumes:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -m 'not integration'
-# With the demo container running:
-.\.venv\Scripts\python.exe -m pytest
+docker compose stop
 ```
 
-References: [SQLGlot AST API](https://sqlglot.com/), [PostgreSQL read-only transactions](https://www.postgresql.org/docs/17/sql-set-transaction.html), [EXPLAIN](https://www.postgresql.org/docs/17/sql-explain.html).
-# Ask about performance
+Restart services with `docker compose up -d --build --wait`. Avoid removing the volumes if you want to keep database contents.
 
-The former Structure & sandbox UI is now **Prediction Layer**. Opening it analyzes the SQL in the editor and shows only structural suggestions plus a data-scale slider at 1×, 10×, 20×, …, 100×. Its estimates linearly scale read times from the separate 50,000-row sandbox with unchanged plan and selectivity; the relative improvement percentage therefore stays constant. Only 1× is measured, and larger scales are explicitly extrapolations rather than production predictions. The previous graphs, DDL output, metrics panels and action buttons are removed from that tab.
+## Prototype boundaries
 
-Enter **What do you want to diagnose?** as well as uploading the history file. The statement is matched locally against report topics (sales, products, payments, customers), explicit table names, and joins / sorting / aggregation. Only matching historical queries are measured; the Improvements summary shows their original query numbers and matching focus. An unmatched statement produces a clear message rather than analyzing unrelated queries. General statements such as “Improve overall query performance” analyze the full uploaded workload. The existing charts and SQL privacy masking remain in place.
-
-The current UI uses **Analyze history file**: choose a `.sql` file containing 2–10 semicolon-separated SELECT statements, or a `.json` array of SQL strings / objects containing `query`, optional PostgreSQL `plan`, and optional `duration_ms`. Files must be under 200 KB. A sample is available in the UI. All uploaded queries are analyzed; the output contains only **Improvements**, with per-query SQL, highlighted measured percentages, and baseline/proposed bars. SQL-only files have no historical plan evidence, so the app obtains fresh EXPLAIN plans. Uploaded durations are treated as supplied context; fresh local measurements establish gains. Uploads are not sent to AI; the existing masking path handles each query individually. Successfully benchmarked queries enter the encrypted local execution history.
-
-**Simulate proposal** now displays read, insert-latency and storage cards and comparison bars. These measurements still describe the separate 50,000-row synthetic sandbox, not a prediction for uploaded source workloads.
-
-Diagnosis now selects an actual past benchmarked query from the current database's local execution history. Run **Optimize & compare** first to record SQL, runtime and a scrubbed EXPLAIN ANALYZE plan. Ask a performance question, or select exact SQL matching. The slowest relevant saved execution is selected, and saved plans are analyzed before new measurements. Local replay SQL is encrypted with Fernet in the history database; its key stays beside that database and is excluded from Git. AI masking is unchanged. This records executions through QueryLab, not every query from pgAdmin or other clients. Earlier masked-only records cannot be replayed; run those reports once again.
-
-The default **Improvements** diagnosis tab shows numbered suggestions with highlighted measured percentages. SQL gains apply to the selected query's fresh comparison; structural gains apply to a separate generic synthetic sandbox. Unmeasured suggestions say **Not measured**, and separate gains are never added.
-
-Open **Ask about performance**, enter “Why is the weekly sales reporting dashboard timing out?” and click **Diagnose**. The answer connects a fixed seven-day sales demo report (23–29 June 2025), recent structurally matching masked plans, current EXPLAIN evidence, a result-equivalent SQL rewrite benchmark, and one RL-selected synthetic structural simulation. Products and payments are also supported. Select **Analyze SQL in the main query box** to associate your own SELECT with a question.
-
-Questions are interpreted locally; the existing privacy/masking path is unchanged. AI, when selected by RL and enabled, receives only masked SQL and operator/numeric metadata. This is a bounded demo assistant, not automatic dashboard discovery. Source runtime measurements and generic 50,000-row sandbox results have different scopes; no combined 85% gain, exact production write-latency prediction, or unobserved timeout cause is claimed. Structural DDL remains a manual review recommendation.
+- The SQL gate supports deterministic read-only SELECT workloads, not arbitrary SQL or user-defined functions. It is not a production security sandbox.
+- GNN training uses synthetic graphs; RL is a contextual bandit; neither guarantees an optimal query plan.
+- Historical matching uses local rules, not unrestricted natural-language understanding or automatic dashboard discovery.
+- Result equality checks can be expensive and require result types supported by `EXCEPT ALL`.
+- Structural recommendations are not automatically applied. Local hash partitions do not establish distributed sharding performance.
+- Scaled predictions are linear estimates from a generic synthetic scenario, not production-capacity forecasts.
+- This project does not claim zero information leakage, formal privacy certification, or guaranteed improvement percentages.
