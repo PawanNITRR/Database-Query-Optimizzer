@@ -93,5 +93,95 @@ def run():
         return jsonify(error='Could not run the query. Check PostgreSQL, table/column names, and the 10-second query limit.'), 400
 
 
+@app.post('/api/chat')
+def chat():
+    """Answer a natural-language question using only this request's masked plan data."""
+    started = perf_counter()
+    try:
+        data = request.get_json()
+        message = data.get('message', '').strip()
+        sql = data.get('query', '').strip()
+        if not message or len(message) > 2000:
+            raise ValueError('Ask a question (maximum 2,000 characters).')
+        if not sql:
+            raise ValueError('Add a SELECT query above so I can inspect its execution plan.')
+
+        # Reuse the same guarded analysis and measured comparison as the dashboard.
+        # The chat turn itself is never forwarded to the AI model.
+        original = Mask(sql)
+        with connect() as conn:
+            configure(conn)
+            plan = explain(conn, original.tree.sql(dialect='postgres'))['Plan']
+            graph = gnn.analyze(plan)
+            from sqlglot import exp
+            ordered = any(isinstance(n, (exp.Order, exp.Limit, exp.Offset)) for n in original.tree.walk())
+            options, seen = {}, {original.sql}
+            if not ordered:
+                for action in ('inline', 'deduplicate', 'combined'):
+                    rewritten = local_rewrite(original.sql, action)
+                    if rewritten not in seen:
+                        options[action] = rewritten
+                        seen.add(rewritten)
+            actions = (['ai'] if data.get('use_ai', False) and not ordered else []) + [
+                a for a in ('combined', 'inline', 'deduplicate') if a in options] + ['keep']
+            state = context(original.sql, graph)
+            action, decision = agent.choose(state, actions)
+            if action == 'ai':
+                masked_candidate, reason, engine = optimize(original.sql, graph, True)
+            else:
+                masked_candidate = options.get(action, original.sql)
+                reason = ('RL selected: ' + LABELS[action] + '. ' + decision)
+                engine = 'RL + local rules + prototype GNN'
+            candidate = original.restore(masked_candidate)
+            if action == 'keep':
+                candidate = original.tree.sql(dialect='postgres')
+            metrics = compare(conn, original.tree.sql(dialect='postgres'), candidate)
+        learning = agent.learn(state, action, runtime_reward(
+            metrics, candidate != original.tree.sql(dialect='postgres')))
+
+        lead = ('I checked your query against the local PostgreSQL plan. ' + reason)
+        if graph:
+            top = max(graph, key=lambda n: n.get('score', 0))
+            evidence = (f"The highest GNN-scored operator is {top['operator']} "
+                        f"(estimated {top['rows']} rows, planner cost {top['cost']}, "
+                        f"score {top['score']}).")
+        else:
+            evidence = 'PostgreSQL returned no plan nodes to score.'
+        topic = message.casefold()
+        if any(word in topic for word in ('index', 'partition', 'shard', 'storage', 'write latency')):
+            guidance = ('This prototype does not recommend or simulate indexes, partitioning, sharding, '
+                        'storage, or write-latency changes. ')
+        elif any(word in topic for word in ('why', 'slow', 'timeout', 'bottleneck')):
+            guidance = 'The plan evidence to investigate first is: ' + evidence + ' '
+        elif any(word in topic for word in ('explain', 'plan', 'operator', 'gnn')):
+            guidance = 'The plan summary is: ' + evidence + ' GNN scores rank plan nodes; they are not proof of savings. '
+        elif any(word in topic for word in ('optimize', 'rewrite', 'improve', 'faster')):
+            guidance = 'I evaluated the selected rewrite against the original query: ' + reason + ' '
+        else:
+            guidance = 'I can help with query speed, plan explanations, and rewrites. ' + evidence + ' '
+        delta = metrics['improvement_pct']
+        if delta > 0:
+            outcome = f"The candidate was {delta:.1f}% faster in this comparison."
+        elif delta < 0:
+            outcome = f"The candidate was {abs(delta):.1f}% slower in this comparison."
+        else:
+            outcome = 'The measured runtimes were effectively unchanged.'
+        question = ' '.join(message.split())
+        if len(question) > 180:
+            question = question[:177] + '...'
+        reply = (f"For “{question}”: {guidance}{lead} {outcome} "
+                 f"The RL policy selected {learning['label']} after "
+                 f"{learning['action_trials']} observations of this action. These are local measurements, not a "
+                 "production-impact or write-latency simulation. No production schema "
+                 "changes were applied.")
+        return jsonify(reply=reply, optimized_query=candidate, graph=graph,
+                       metrics=metrics, engine=engine,
+                       total_ms=round((perf_counter() - started) * 1000, 1))
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    except Exception:
+        return jsonify(error='Could not analyze this query. Check PostgreSQL, table/column names, and the 10-second query limit.'), 400
+
+
 if __name__ == '__main__':
     app.run(host='127.0.0.1', port=5000, debug=False)

@@ -1,6 +1,6 @@
 # QueryLab
 
-A small local SQL optimizer: enter a SELECT, mask it, analyze its execution-plan graph, ask local AI for a rewrite, restore the SQL, and compare real PostgreSQL runtimes. One page, no accounts or query history.
+A local SQL performance chatbot: provide a SELECT, ask why it may be slow or request a rewrite, then review plan evidence and measured PostgreSQL runtimes. Chat history stays in the browser and is not saved by the app.
 
 ## Run on Windows
 
@@ -13,7 +13,7 @@ docker compose up -d --wait
 .\.venv\Scripts\python.exe app.py
 ```
 
-Open http://127.0.0.1:5000 and click **Load example**. To use AI, install Ollama and run `ollama pull qwen2.5-coder:7b` first. Otherwise uncheck **Use local AI** to test the pipeline with conservative local SQL rules. AI failure is reported explicitly; it is never silently presented as an AI result.
+Open http://127.0.0.1:5000, load a sample query, and ask a question in the chat. Each turn analyzes and compares the query currently in the Query context panel. To use AI rewrites, install Ollama and run `ollama pull qwen2.5-coder:7b` first. Otherwise leave **Use local AI** unchecked to use conservative local SQL rules. AI failure is reported explicitly; it is never silently presented as an AI result.
 
 For your existing local database, set `DATABASE_URL` before starting:
 
@@ -54,6 +54,12 @@ the app never regenerates the dataset when running a query.
 View the four tables in pgAdmin under querylab → Schemas → public → Tables.
 
 ## What each step does
+
+The chat endpoint uses the same guarded query pipeline as the optimizer. It
+returns a natural-language summary with the highest-scored plan operator,
+measured runtime comparison, and candidate SQL. The chat question is not sent
+to Ollama; AI is used only for the optional masked SQL rewrite. Each turn runs a
+new comparison, so allow time for the four warm PostgreSQL samples.
 
 1. SQLGlot parses one PostgreSQL SELECT.
 2. A fresh per-request HMAC key masks all identifiers; literal placeholders hide values and comments are removed. The reverse mapping stays in process memory and is discarded after the request. This is reversible pseudonymization, **not encryption**: SQL structure and repeated-value patterns remain visible.
