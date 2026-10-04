@@ -32,6 +32,8 @@ def test_demo_reports(name, query):
     assert response.status_code == 200, response.json
     data = response.json
     assert data['changed']
+    assert data['rl']['action'] == 'inline'
+    assert data['rl']['action_trials'] == 1
     assert data['metrics']['original']['rows'] == data['metrics']['optimized']['rows'] > 0
     print(json.dumps({'report': name, 'response_ms': data['total_ms'],
         'original_ms': data['metrics']['original']['execution_ms'],

@@ -88,7 +88,37 @@ on this machine because the configured model is unavailable.
 
 ## Scope
 
-Implements the requested five-step MVP from Problem Statement 4. No RL, sharding, automatic indexes, production hooks, deployment, or write-latency simulations. The document's larger requirements are deliberately outside this simple project.
+Implements the requested five-step MVP plus a small RL action-selection loop.
+No sharding, automatic indexes, production hooks, deployment, or write-latency
+simulations. The document's larger requirements remain outside this simple project.
+
+## Reinforcement learning
+
+The RL component is a contextual UCB bandit, a one-step form of reinforcement
+learning. It selects among keeping the original, inlining eligible CTEs,
+deduplicating IN values, combining distinct rewrites, and asking Ollama when
+Use local AI is checked. That checkbox makes AI eligible; RL may select a local
+action instead. Ineligible/no-op rewrite actions are removed. Ordered/limited
+queries only allow keeping the original.
+
+Context uses coarse structural features: join count, materialized CTE/IN flags,
+estimated row-count magnitude and a GNN-score bucket. It never uses identifiers
+or literal values. New actions are tried first, then an upper-confidence-bound
+policy balances mean reward with exploration. There is no preloaded reward data.
+
+Reward is (original median runtime - candidate median runtime) / original runtime,
+clipped to [-1, 1]. Unchanged queries earn zero, and differences below 3% or
+0.05 ms earn zero to reduce noise. Invalid or failed rewrite proposals earn -1.
+Q(context, action) is updated by the incremental mean of observed rewards.
+Each action executes once through the existing comparison pipeline; RL adds no
+extra database benchmark runs. Exploration can intentionally keep the original
+or try a less successful action. No universal speedup is promised.
+
+Learned counts and Q values persist locally in `data/rl.sqlite3`, ignored by Git.
+The SQLite policy stores no SQL, query hashes, row data, credentials or names.
+Set RL_STATE_PATH to select another policy file. Tests use isolated temporary
+policies and do not train the live app. This is a small adaptive prototype,
+not a multi-step RL engine for indexes or sharding.
 
 ## Tests
 

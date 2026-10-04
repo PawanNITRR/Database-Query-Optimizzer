@@ -15,10 +15,10 @@ def ai_available():
         return False
 
 
-def local_rewrite(sql):
+def local_rewrite(sql, action='combined'):
     """Conservative rewrites, including inlining a single-use SELECT * CTE."""
     tree = select_only(sql)
-    for cte in tree.find_all(exp.CTE):
+    for cte in (tree.find_all(exp.CTE) if action in {'inline', 'combined'} else []):
         query = cte.this
         if (cte.args.get('materialized') is True and isinstance(query, exp.Select)
             and len(query.expressions) == 1 and isinstance(query.expressions[0], exp.Star)
@@ -27,7 +27,7 @@ def local_rewrite(sql):
             and isinstance(query.args['from_'].this.this, exp.Identifier)
             and sum(table.name == cte.alias for table in tree.find_all(exp.Table)) == 1):
             cte.set('materialized', False)
-    for node in tree.find_all(exp.In):
+    for node in (tree.find_all(exp.In) if action in {'deduplicate', 'combined'} else []):
         seen, items = set(), []
         for item in node.expressions:
             key = item.sql()

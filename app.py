@@ -2,12 +2,14 @@ from flask import Flask, jsonify, render_template, request
 from time import perf_counter
 from privacy import Mask, select_only
 from gnn import PlanGNN
-from optimizer import optimize, ai_available
+from optimizer import optimize, ai_available, local_rewrite
+from rl import RewriteAgent, context, runtime_reward, LABELS
 from database import connect, configure, explain, compare
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 32 * 1024
 gnn = PlanGNN()
+agent = RewriteAgent()
 
 
 @app.before_request
@@ -46,20 +48,44 @@ def run():
         with connect() as conn:
             configure(conn)
             graph = gnn.analyze(explain(conn, original)['Plan'])
-            masked_candidate, reason, engine = optimize(mask.sql, graph, data.get('use_ai', True))
-            candidate = mask.restore(masked_candidate)
-            # Equality ignores ordering; retain the original when ORDER BY/LIMIT exist.
             from sqlglot import exp
-            if any(isinstance(n, (exp.Order, exp.Limit, exp.Offset))
-                   for tree in (mask.tree, select_only(candidate)) for n in tree.walk()):
-                candidate = original
-                masked_candidate = mask.sql
-                reason = 'Kept the original query to preserve ordering and row limits.'
-            metrics = compare(conn, original, candidate)
+            ordered = any(isinstance(n, (exp.Order, exp.Limit, exp.Offset)) for n in mask.tree.walk())
+            options, seen = {}, {mask.sql}
+            if not ordered:
+                for action in ('inline', 'deduplicate', 'combined'):
+                    rewritten = local_rewrite(mask.sql, action)
+                    if rewritten not in seen:
+                        options[action] = rewritten
+                        seen.add(rewritten)
+            actions = (['ai'] if data.get('use_ai', True) and not ordered else []) + [
+                a for a in ('combined', 'inline', 'deduplicate') if a in options] + ['keep']
+            state = context(mask.sql, graph)
+            action, decision = agent.choose(state, actions)
+            try:
+                if action == 'ai':
+                    masked_candidate, reason, engine = optimize(mask.sql, graph, True)
+                else:
+                    masked_candidate = options.get(action, mask.sql)
+                    reason = ('RL selected: ' + LABELS[action] + '. ' + decision)
+                    engine = 'RL + local rules + prototype GNN'
+                candidate = mask.restore(masked_candidate)
+                if action == 'keep':
+                    candidate = original
+                if any(isinstance(n, (exp.Order, exp.Limit, exp.Offset)) for n in select_only(candidate).walk()):
+                    if action != 'keep':
+                        raise ValueError('Rewrite introduced ordering or limits; rejected to preserve result semantics.')
+                metrics = compare(conn, original, candidate)
+            except Exception:
+                # Invalid/failed proposals receive a negative reward, never a speedup reward.
+                if action != 'keep':
+                    agent.learn(state, action, -1)
+                raise
+        learning = agent.learn(state, action, runtime_reward(metrics, candidate != original))
+        learning['decision'] = decision
         return jsonify(masked_query=mask.sql, masked_optimized=masked_candidate,
                        optimized_query=candidate, explanation=reason, engine=engine,
                        graph=graph, metrics=metrics, changed=candidate != original,
-                       total_ms=round((perf_counter() - started) * 1000, 1))
+                       total_ms=round((perf_counter() - started) * 1000, 1), rl=learning)
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
     except Exception:

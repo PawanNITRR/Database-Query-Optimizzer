@@ -1,4 +1,8 @@
 const $ = id => document.getElementById(id);
+const rlSummary = document.createElement('p');
+rlSummary.className = 'note';
+rlSummary.id = 'rl-summary';
+$('verdict').after(rlSummary);
 $('example').onclick = () => $('query').value = examples.sales;
 ['sales', 'products', 'payments'].forEach(name => $(name).onclick = () => $('query').value = examples[name]);
 fetch('/api/status').then(r=>r.json()).then(s=>{
@@ -13,6 +17,10 @@ $('run').onclick = async () => {
     const response=await fetch('/api/optimize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:$('query').value,use_ai:$('ai').checked})});
     const data=await response.json();if(!response.ok)throw new Error(data.error||'Request failed.');
     const m=data.metrics;
+    const rl=data.rl;
+    rlSummary.textContent = 'RL action: ' + rl.label + ' · Reward: ' + rl.reward.toFixed(3) +
+      ' · Learned mean reward: ' + rl.q_value.toFixed(3) + ' · Action observations: ' + rl.action_trials +
+      '. ' + rl.decision;
     $('old').textContent=m.original.execution_ms.toFixed(3)+' ms';$('new').textContent=m.optimized.execution_ms.toFixed(3)+' ms';$('gain').textContent=m.improvement_pct.toFixed(1)+'%';
     $('optimized').textContent=data.optimized_query;$('masked').textContent=data.masked_query;$('masked-result').textContent=data.masked_optimized;$('reason').textContent=data.explanation;$('engine').textContent=data.engine;
     $('verdict').textContent=(data.changed?'Rewrite passed the result-row check.':'No safe structural rewrite was applied. These repeated runs show normal timing variation.') + ' Total response: ' + (data.total_ms / 1000).toFixed(2) + ' seconds.';

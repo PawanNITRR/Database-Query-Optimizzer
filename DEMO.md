@@ -41,6 +41,15 @@ LIMIT 20;
 7. Expand Plan analysis to show the prototype GNN's operator scores.
 8. Repeat with Product report or Payment report.
 
+The RL policy now chooses the action. The first run of a new structure explores
+an eligible rewrite; another run may explore keeping the original. Subsequent
+runs balance measured mean reward with exploration. Point to the RL action,
+reward, learned mean reward and observation count above the runtime cards.
+Policy observations persist across app restarts without storing query content.
+If RL chooses keep-original, its reward is zero regardless of timing variation.
+Checking Use local AI adds Ollama as an eligible action, rather than guaranteeing
+that every request calls the model.
+
 ## Observed performance
 
 Measured on this machine after loading the enriched dataset. Each response
